@@ -1,0 +1,327 @@
+openapi: 3.0.3
+info:
+    title: Tomlyn API Reference
+    version: 1.0.0
+    contact:
+        name: The Tomlyn Team
+        url: https://tomlyn.protasis.moe
+        email: tomlyn-support@protasis.moe
+
+paths:
+    /auth/login:
+        post:
+            tags: ["Tomlyn API"]
+            summary: Acquire an API token for your account.
+            description: "Acquire a JWT token for your account. This token is required for all other API requests. Pass in this token in the `Authorization` header. *Note - unless otherwise specified, API tokens expire after 7 days since its time of issue. When the `/auth/logout` method is successfully called, or another successful login attempt to this account is made, this token expires immediately.*"
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            properties:
+                                username:
+                                    type: string
+                                    description: Your Tomlyn account username.
+                                    example: "KuromeSama6"
+                                password:
+                                    type: string
+                                    description: Your Tomlyn account password.
+                                    example: "password123"
+            responses:
+                "200":
+                    description: "`0` The login was successful."
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    status:
+                                        type: integer
+                                        example: 0
+                                    message:
+                                        type: string
+                                        example: "ok"
+                                    data:
+                                        type: object
+                                        properties:
+                                            jwt:
+                                                type: string
+                                                description: JWT token for your account. Pass this token in the `Authorization` header for all other API requests.
+                                                example: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0IiwiaWF0IjoxNzI2ODg4OTQyLCJpc3MiOiJ0b21seW5kIiwianRpIjoiaEdUUnVYdklYUVdIWno2MjVDd2M4UjBZZllTaTZrRldlUVRJVzY4OWltWWRRR0k0VVNXZUIyOTRMMElnMnJzSCIsInR5cGUiOiJBUEkifQ.qDxEAeQj6YqE5PlCsoGEJczfVN6xIXgnt4Rkwj50Tag"
+                "401":
+                    description: "`15` The login was unsuccessful. The username or password was incorrect."
+                    content:
+                        application/json:
+                            example:
+                                status: 15
+                                message: "invalid credentials"
+                                data: {}
+    /api/publish/create:
+        post:
+            tags:
+                - Tomlyn API
+            summary: Creates a new Package ID.
+            description: Requests for a new globally unique Package ID. The first step of the publishing workflow.
+            security:
+                - TomlynAccountJWT: []
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            allOf:
+                                - $ref: "#/components/schemas/PackageManifestHeader"
+                                - $ref: "#/components/schemas/PackageManifestMetadata"
+            responses:
+                "200":
+                    description: "`0` A new Package ID has been successfully created."
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    status:
+                                        type: integer
+                                        example: 0
+                                    message:
+                                        type: string
+                                        example: "ok"
+                                    data:
+                                        type: object
+                                        properties:
+                                            packageId:
+                                                $ref: "#/components/schemas/TomlynSnowflakeID"
+                                            manifest:
+                                                $ref: "#/components/schemas/PackageManifest"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+                "429":
+                    description: "`17` the UUID specified in the package descriptor is already in use."
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/responses/StandardResponse"
+                            example:
+                                status: 17
+                                message: "duplicate package uuid"
+                                data: {}
+
+    /repo/package/{package_id}/status:
+        get:
+            tags:
+                - Repository Protocol
+            summary: Get status of a package.
+            description: Acquires the status of a package in your repository.
+            parameters:
+                - $ref: "#/components/parameters/PackageIdParam"
+            responses:
+                "200":
+                    description: This package is stored or will be stored in your repository.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    hasFile:
+                                        type: boolean
+                                        description: Whether your repository is currently in possession
+                                            of the actual .tomz file. When false, indicates that this package
+                                            is permitted to be stored in your repository, but the actual
+                                            file has not been yet received.
+                "404":
+                    description: This package could not be found in your repository. An empty
+                        response body is expected.
+components:
+    schemas:
+        TomlynSnowflakeID:
+            type: string
+            minLength: 64
+            maxLength: 64
+            description: A globally unique identifier generated using Tomlyn's algorithm.
+            example: "VEOD7z10sP1usvUZrfAG4s1PDL3dzY3jEnwAX577j5yjwJF3ISNAT782LP0DhkFR"
+
+        StandardResponse:
+            description: Standard response object for all API endpoints. This is what all responses from the Tomlyn central server will look like.
+            type: object
+            properties:
+                status:
+                    type: integer
+                    description: |
+                        The status code of this response:
+                        - `0`: Indicates a successful operation.
+                        - `1–9`: Represents internal server errors or invalid client requests (mapped to 5XX HTTP status codes).
+                        - `10–99`: Represents client errors (mapped to 4XX HTTP status codes).
+                        - `100–999`: Indicates additional warning messages, though the request was still successful. Rarely used.
+                        - `1000 and above`: Reserved for informational messages. The request was successful, but additional info is provided. Rarely used.
+
+                        Check the "API Status Codes" page in the Tomlyn docs for more details and specifics.
+                message:
+                    type: string
+                    description: A human-readable message that describes the result of the operation. This will be "ok" on most successful operations.
+                data:
+                    type: object
+                    description: Data returned by this server about this specific request. This field will be an empty object on successful operations and either an empty object or not present on failed operations.
+
+        PackageManifestHeader:
+            type: object
+            description: General info about a pacakge.
+            properties:
+                uuid:
+                    type: string
+                    format: uuid
+                    description: UUID in this package's package descriptor.
+                fileChecksum:
+                    type: string
+                    minLength: 64
+                    maxLength: 64
+                    description: SHA-256 checksum of the package file.
+                    example: ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb
+                repositoryAddress:
+                    type: string
+                    description: URL of the repository where the package is stored.
+                    example: http://repo.tomlyn.protasis.moe/
+                privatePackage:
+                    type: boolean
+                    description: Indicates if the package is private.
+                    default: false
+            required:
+                - uuid
+                - fileChecksum
+                - repositoryAddress
+        PackageManifestMetadata:
+            type: object
+            description: Metadata about a package such as name and author.
+            required:
+                - name
+                - author
+                - mapper
+                - difficultyMin
+                - difficultyMax
+                - nsfw
+            properties:
+                name:
+                    type: string
+                    description: Full name of the package in its original language. This should be the same as the full name in the package descriptor.
+                    example: "神聖かまってちゃん"
+                romanizedName:
+                    type: string
+                    description: Romanized name of this package. Romanized names may only contain ASCII. If not provided, name will be used.
+                    default: <name>
+                    example: "shinsei kamatte chan"
+                author:
+                    type: string
+                    description: The name of the author of the song used in this package, in its original language.
+                    example: "23才の夏休み"
+                authorRomanized:
+                    type: string
+                    description: Romanized name of the author. Romanized names may only contain ASCII. If not provided, author will be used.
+                    default: <author>
+                    example: "23 sai no natsuyasumi"
+                mapper:
+                    type: string
+                    description: The name of the entity (individual, team, or organization) that produced the sheets in this package. This could be any name - does not have to be a legal name.
+                    example: KuromeSama6
+                tags:
+                    type: array
+                    items:
+                        type: string
+                        minLength: 0
+                        maxLength: 10
+                    description: Up to 10 tags for this package. Tags are strings and limited to 16 character max. Defaults to an empty array.
+                    default: []
+                    example:
+                        - RockAndRoll
+                        - Hard
+                        - Japanese
+                difficultyMin:
+                    type: number
+                    format: float
+                    minimum: 0
+                    description: The chart constant of the sheet with the lowest difficulty in this package.
+                    example: 7.5
+                difficultyMax:
+                    type: number
+                    format: float
+                    maximum: 14
+                    description: The chart constant of the sheet with the highest difficulty in this package.
+                    example: 12.9
+                nsfw:
+                    type: boolean
+                    description: Whether ANY component of this package that is visible to game players (including but not limited to the audio track, cover image, or the background video) constutes NSFW content. See related policies in.
+                    example: false
+
+        PackageManifest:
+            type: object
+            allOf:
+                - properties:
+                      id:
+                          $ref: "#/components/schemas/TomlynSnowflakeID"
+                      status:
+                          type: string
+                          enum:
+                              - STANDBY
+                              - UPLOADED
+                              - UNDER_REVIEW
+                              - PUBLISHED
+                              - PARKED
+                          description: The current status of this package.
+                          example: STANDBY
+
+                - $ref: "#/components/schemas/PackageManifestHeader"
+                - $ref: "#/components/schemas/PackageManifestMetadata"
+
+    parameters:
+        PackageIdParam:
+            in: path
+            name: package_id
+            description: The globally unique Package ID that identifies this package.
+            required: true
+            schema:
+                type: string
+                minLength: 64
+                maxLength: 64
+
+    responses:
+        StandardResponse:
+            description: Standard response object for all API endpoints. This is what all responses from the Tomlyn central server will look like.
+            content:
+                application/json:
+                    schema:
+                        type: object
+                        properties:
+                            status:
+                                type: integer
+                                description: |
+                                    The status code of this response:
+                                    - `0`: Indicates a successful operation.
+                                    - `1–9`: Represents internal server errors or invalid client requests (mapped to 5XX HTTP status codes).
+                                    - `10–99`: Represents client errors (mapped to 4XX HTTP status codes).
+                                    - `100–999`: Indicates additional warning messages, though the request was still successful. Rarely used.
+                                    - `1000 and above`: Reserved for informational messages. The request was successful, but additional info is provided. Rarely used.
+
+                                    Check the "API Status Codes" page in the Tomlyn docs for more details and specifics.
+                            message:
+                                type: string
+                                description: A human-readable message that describes the result of the operation. This will be "ok" on most successful operations.
+
+        UnauthorizedError:
+            description: "`16` The request was not authorized. Either a JWT token was not provided or the provided token was invalid."
+            content:
+                application/json:
+                    schema:
+                        allOf:
+                            - $ref: "#/components/schemas/StandardResponse"
+                            - example:
+                                  status: 16
+                                  message: "permission denied"
+                                  data: {}
+
+    securitySchemes:
+        TomlynAccountJWT:
+            type: apiKey
+            name: Authorization
+            in: header
+            description: JWT Token acquired via the login method.
+
+externalDocs:
+    description: See more on the official Tomlyn docs site.
+    url: https://tomlyn-docs.protasis.moe/
