@@ -44,16 +44,16 @@ paths:
                                     data:
                                         type: object
                                         properties:
-                                            jwt:
+                                            token:
                                                 type: string
                                                 description: JWT token for your account. Pass this token in the `Authorization` header for all other API requests.
                                                 example: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0IiwiaWF0IjoxNzI2ODg4OTQyLCJpc3MiOiJ0b21seW5kIiwianRpIjoiaEdUUnVYdklYUVdIWno2MjVDd2M4UjBZZllTaTZrRldlUVRJVzY4OWltWWRRR0k0VVNXZUIyOTRMMElnMnJzSCIsInR5cGUiOiJBUEkifQ.qDxEAeQj6YqE5PlCsoGEJczfVN6xIXgnt4Rkwj50Tag"
                 "401":
-                    description: "`15` The login was unsuccessful. The username or password was incorrect."
+                    description: "`16` The login was unsuccessful. The username or password was incorrect."
                     content:
                         application/json:
                             example:
-                                status: 15
+                                status: 16
                                 message: "invalid credentials"
                                 data: {}
     /api/publish/create:
@@ -86,12 +86,7 @@ paths:
                                         type: string
                                         example: "ok"
                                     data:
-                                        type: object
-                                        properties:
-                                            packageId:
-                                                $ref: "#/components/schemas/TomlynSnowflakeID"
-                                            manifest:
-                                                $ref: "#/components/schemas/PackageManifest"
+                                        $ref: "#/components/schemas/PackageManifest"
                 "401":
                     $ref: "#/components/responses/UnauthorizedError"
                 "429":
@@ -104,6 +99,40 @@ paths:
                                 status: 17
                                 message: "duplicate package uuid"
                                 data: {}
+
+    /api/package/{package_id}:
+        get:
+            tags:
+                - Tomlyn API
+            summary: Get package manifest.
+            description: |
+                Acquirese the manifest of a package. By default, this API will only return publically visible packages that are in the `PUBLISHED` state. Providing an API token allows you to get 1) private packages (they must be published) that you have access to, as well as 2) your own packages that are not published.
+            parameters:
+                - $ref: "#/components/parameters/PackageIdParam"
+            security:
+                - {}
+                - TomlynAccountJWT: []
+            responses:
+                "200":
+                    description: |
+                        `0` The full package metadata was successfully retrieved.
+
+                        `100` A partial package metadata was successfully retrieved. This is a partial response, and the `data` field will contain only the fields that are publically visible. To obtain a full response, provide an API token that has access to that package.
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    status:
+                                        type: integer
+                                        example: 0
+                                    message:
+                                        type: string
+                                        example: "ok"
+                                    data:
+                                        $ref: "#/components/schemas/PackageManifest"
+                "404":
+                    description: "`15` The package specified does not exist."
 
     /repo/package/{package_id}/status:
         get:
@@ -121,15 +150,53 @@ paths:
                             schema:
                                 type: object
                                 properties:
-                                    hasFile:
-                                        type: boolean
-                                        description: Whether your repository is currently in possession
-                                            of the actual .tomz file. When false, indicates that this package
-                                            is permitted to be stored in your repository, but the actual
-                                            file has not been yet received.
+                                    status:
+                                        type: integer
+                                        example: 0
+                                    message:
+                                        type: string
+                                        example: "ok"
+                                    data:
+                                        type: object
+                                        properties:
+                                            hasFile:
+                                                type: boolean
+                                                description: Whether your repository is currently in possession
+                                                    of the actual .tomz file. When false, indicates that this package
+                                                    is permitted to be stored in your repository, but the actual
+                                                    file has not been yet received.
                 "404":
                     description: This package could not be found in your repository. An empty
                         response body is expected.
+
+    /repo/package/{package_id}/upload:
+        post:
+            tags: [Repository Protocol]
+            summary: Upload a package to your repository.
+            description: Upload a package to your repository. This file must be a .tomz file.
+            parameters:
+                - $ref: "#/components/parameters/PackageIdParam"
+            requestBody:
+                required: true
+                content:
+                    multipart/form-data:
+                        schema:
+                            type: object
+                            properties:
+                                file:
+                                    type: string
+                                    format: binary
+                                    description: The file to upload.
+            responses:
+                "200":
+                    description: "The package was successfully uploaded."
+                "401":
+                    description: "*Implemented by Your Repository* The request was not authorized."
+                "403":
+                    description: "*Implemented by Your Repository* The user does not have permission to upload this package to your repository."
+                "404":
+                    description: "The package specified does not exist."
+
 components:
     schemas:
         TomlynSnowflakeID:
@@ -255,6 +322,10 @@ components:
                 - properties:
                       id:
                           $ref: "#/components/schemas/TomlynSnowflakeID"
+                      owner:
+                          $ref: "#/components/schemas/TomlynSnowflakeID"
+                          description: The ID of the account who owns this package.
+
                       status:
                           type: string
                           enum:
