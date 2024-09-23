@@ -71,6 +71,7 @@ paths:
                             allOf:
                                 - $ref: "#/components/schemas/PackageManifestHeader"
                                 - $ref: "#/components/schemas/PackageManifestMetadata"
+                                - $ref: "#/components/schemas/PackageManifestSheets"
             responses:
                 "200":
                     description: "`0` A new Package ID has been successfully created."
@@ -86,7 +87,15 @@ paths:
                                         type: string
                                         example: "ok"
                                     data:
-                                        $ref: "#/components/schemas/PackageManifest"
+                                        properties:
+                                            repoToken:
+                                                type: string
+                                                description: |
+                                                    The **Repository Token** associated with this account and this package. 
+
+                                                    Repository tokens are JWT tokens that proofs the current account's ownership of this package. This token is not to be confused with your accoun't API authentication token. **This token represent credentials - do not share this token with anyone.** This token can be acquired again at any time by calling an API.
+                                            manifest:
+                                                $ref: "#/components/schemas/PackageManifest"
                 "401":
                     $ref: "#/components/responses/UnauthorizedError"
                 "429":
@@ -134,6 +143,97 @@ paths:
                 "404":
                     description: "`15` The package specified does not exist."
 
+    /api/package/{package_id}/repoToken:
+        get:
+            tags:
+                - Tomlyn API
+            summary: Reacquire repository token.
+            description: Get the Repository Token associated to this package and account. You must be the owner of this package to acquire its repository token.
+            security:
+                - TomlynAccountJWT: []
+            parameters:
+                - $ref: "#/components/parameters/PackageIdParam"
+            responses:
+                "200":
+                    description: "`0` The repository token was successfully retrieved."
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    status:
+                                        type: integer
+                                        example: 0
+                                    message:
+                                        type: string
+                                        example: "ok"
+                                    data:
+                                        type: object
+                                        properties:
+                                            repoToken:
+                                                type: string
+                                                description: |
+                                                    The **Repository Token** associated with this account and this package. 
+
+                                                    Repository tokens are JWT tokens that proofs the current account's ownership of this package. This token is not to be confused with your accoun't API authentication token. **This token represent credentials - do not share this token with anyone.** This token can be acquired again at any time by calling an API.
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+                "404":
+                    description: "`15` The request was authenticated successfully, but the package specified does not exist."
+
+    /api/auth/verifyRepoToken:
+        post:
+            tags:
+                - Tomlyn API
+            summary: Verify a repository token.
+            description: Called by repositories to verify a repository token. This token is used to prove the ownership of a package.
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            properties:
+                                repoToken:
+                                    type: string
+                                    description: The repository token to verify.
+                                    example: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0IiwiaWF0IjoxNzI2ODg4OTQyLCJpc3MiOiJ0b21seW5kIiwianRpIjoiaEdUUnVYdklYUVdIWno2MjVDd2M4UjBZZllTaTZrRldlUVRJVzY4OWltWWRRR0k0VVNXZUIyOTRMMElnMnJzSCIsInR5cGUiOiJBUEkifQ.qDxEAeQj6YqE5PlCsoGEJczfVN6xIXgnt4Rkwj50Tag"
+            responses:
+                "200":
+                    description: "`0` The repository token is valid."
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    status:
+                                        type: integer
+                                        example: 0
+                                    message:
+                                        type: string
+                                        example: "ok"
+                                    data:
+                                        type: object
+                                        properties:
+                                            packageId:
+                                                type: string
+                                                description: The Package ID that this token is associated with.
+                                                example: "VEOD7z10sP1usvUZrfAG4s1PDL3dzY3jEnwAX577j5yjwJF3ISNAT782LP0DhkFR"
+                "404":
+                    description: "`16` The token provided is invalid. The repository should not trust the request that provided this token."
+
+    /repo/info:
+        get:
+            tags: [Repository Protocol]
+            summary: General repository information.
+            description: Get general information about your repository. Implementaiton of this endpoint is mandatory - clients displays this information to users and may refuse to download your repository if this information is not correct or missing.
+            responses:
+                "200":
+                    description: The repository information was successfully retrieved. View more on repository information on the Tomlyn docs site.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/RepositoryInfo"
+
     /repo/package/{package_id}/status:
         get:
             tags:
@@ -142,6 +242,8 @@ paths:
             description: Acquires the status of a package in your repository.
             parameters:
                 - $ref: "#/components/parameters/PackageIdParam"
+            security:
+                - PackageRepoTokenJWT: []
             responses:
                 "200":
                     description: This package is stored or will be stored in your repository.
@@ -166,8 +268,7 @@ paths:
                                                     is permitted to be stored in your repository, but the actual
                                                     file has not been yet received.
                 "404":
-                    description: This package could not be found in your repository. An empty
-                        response body is expected.
+                    description: This package could not be found in your repository. An empty response body is expected.
 
     /repo/package/{package_id}/upload:
         post:
@@ -176,6 +277,8 @@ paths:
             description: Upload a package to your repository. This file must be a .tomz file.
             parameters:
                 - $ref: "#/components/parameters/PackageIdParam"
+            security:
+                - PackageRepoTokenJWT: []
             requestBody:
                 required: true
                 content:
@@ -230,7 +333,7 @@ components:
 
         PackageManifestHeader:
             type: object
-            description: General info about a pacakge.
+            description: General info about a package.
             properties:
                 uuid:
                     type: string
@@ -299,26 +402,41 @@ components:
                         - RockAndRoll
                         - Hard
                         - Japanese
-                difficultyMin:
-                    type: number
-                    format: float
-                    minimum: 0
-                    description: The chart constant of the sheet with the lowest difficulty in this package.
-                    example: 7.5
-                difficultyMax:
-                    type: number
-                    format: float
-                    maximum: 14
-                    description: The chart constant of the sheet with the highest difficulty in this package.
-                    example: 12.9
                 nsfw:
                     type: boolean
                     description: Whether ANY component of this package that is visible to game players (including but not limited to the audio track, cover image, or the background video) constutes NSFW content. See related policies in.
                     example: false
 
+        PackageManifestSheets:
+            type: object
+            description: An object that stores data on sheets in this package.
+            required:
+                - sheets
+            properties:
+                sheets:
+                    type: object
+                    required:
+                        - BSC
+                        - LO
+                        - HI
+                        - OVR
+                    properties:
+                        BSC:
+                            $ref: "#/components/schemas/SheetDescriptor"
+                        LO:
+                            $ref: "#/components/schemas/SheetDescriptor"
+                        HI:
+                            $ref: "#/components/schemas/SheetDescriptor"
+                        OVR:
+                            $ref: "#/components/schemas/SheetDescriptor"
+
         PackageManifest:
             type: object
             allOf:
+                - required:
+                      - id
+                      - owner
+                      - status
                 - properties:
                       id:
                           $ref: "#/components/schemas/TomlynSnowflakeID"
@@ -339,6 +457,84 @@ components:
 
                 - $ref: "#/components/schemas/PackageManifestHeader"
                 - $ref: "#/components/schemas/PackageManifestMetadata"
+                - $ref: "#/components/schemas/PackageManifestSheets"
+
+        SheetDescriptor:
+            type: object
+            description: Metadata about a sheet in a package.
+            required:
+                - constant
+            properties:
+                constant:
+                    type: number
+                    format: float
+                    minimum: 1
+                    maximum: 14
+                    description: The chart constant of this sheet.
+                    example: 12.9
+
+        RepositoryInfo:
+            type: object
+            description: Information about a repository.
+            required:
+                - name
+                - address
+                - description
+                - maintainer
+                - email
+                - squawk
+                - protocol
+                - version
+            properties:
+                name:
+                    type: string
+                    description: The name of the repository.
+                    example: "Tomlyn Official Repository"
+                address:
+                    type: string
+                    description: The official URL of the repository.
+                    example: "http://repo.tomlyn.protasis.moe/"
+                description:
+                    type: string
+                    description: A description of the repository. Rich text is supported.
+                    example: |
+                        The official repository for Tomlyn packages. This repository is hosted by the Tomlyn team and is only used to host official packages and events. If you wish to submit a package to this repository, please contact the Tomlyn team.
+                maintainer:
+                    type: string
+                    description: The name of the maintainer (individual or team) of the repository.
+                    example: KuromeSama6
+                email:
+                    type: string
+                    description: Contact email for the repository. It may be an individual's email or a team email.
+                    format: email
+                    example: packagehosting@tomyln.protasis.moe
+                contact:
+                    type: string
+                    description: Preferred contact method for the repository. This could be an email, a Discord username, or any other contact method. If not provided, email will be used.
+                    default: <email>
+                    example: KuromeSama6#1234
+                squawk:
+                    type: integer
+                    description: |
+                        A number that represents the repository's current status and may be used for verifications purposes or to communicate additional information. Use `0` for normal operation.
+
+                        See "Squawk Codes" in the docs site for more information.
+                    example: 7500
+                private:
+                    type: boolean
+                    description: Whether this repository is private. Defaults to `false`.
+                    default: false
+                version:
+                    type: string
+                    description: An repository-defined version number for the repository. This could be a semantic version number or any other versioning scheme.
+                    example: "1.0.0"
+                protocol:
+                    type: string
+                    description: |
+                        An arbitrary word or phrase representing the version of the repository protocol this repository is implementing. Central and clients will check this to make sure that a repository is implementing the latest repository protocol. Clients will refuse to download packages from a out-of-date repository.
+
+                        Protocol version changes whenever there is a major change in repository protocol. The latest protocol version will be posted on the Tomlyn docs site as well as the developer portal. Make sure that you update your repository settings in time.
+                    example: MATCHA BUFFET
 
     parameters:
         PackageIdParam:
@@ -392,6 +588,19 @@ components:
             name: Authorization
             in: header
             description: JWT Token acquired via the login method.
+
+        PackageRepoTokenJWT:
+            type: apiKey
+            name: X-Repo-Token
+            in: header
+            description: |
+                *FOR REQUESTS TO REPOSITORIES ONLY*
+
+                The **Repository Token** associated with this account and this package. A repository may choose to use this token to verify the identity of the requestor and the ownership of the package.
+
+                This authentication method is optional - the repository can choose whether to honor this token or not. It is up to the repository to decide when this token is required as well as what resources this token can authorize access to.
+
+                In addition, individual repository implementations may impose their own authentication methods, which may include passing in a token provided by that repository in the `Authorization` header.
 
 externalDocs:
     description: See more on the official Tomlyn docs site.
