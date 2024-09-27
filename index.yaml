@@ -48,6 +48,9 @@ paths:
                                                 type: string
                                                 description: JWT token for your account. Pass this token in the `Authorization` header for all other API requests.
                                                 example: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0IiwiaWF0IjoxNzI2ODg4OTQyLCJpc3MiOiJ0b21seW5kIiwianRpIjoiaEdUUnVYdklYUVdIWno2MjVDd2M4UjBZZllTaTZrRldlUVRJVzY4OWltWWRRR0k0VVNXZUIyOTRMMElnMnJzSCIsInR5cGUiOiJBUEkifQ.qDxEAeQj6YqE5PlCsoGEJczfVN6xIXgnt4Rkwj50Tag"
+                                            commToken:
+                                                $ref: "#/components/schemas/COMMToken"
+                                                
                 "401":
                     description: "`16` The login was unsuccessful. The username or password was incorrect."
                     content:
@@ -56,6 +59,52 @@ paths:
                                 status: 16
                                 message: "invalid credentials"
                                 data: {}
+
+    /api/user/commToken:
+        get:
+            tags: ["Tomlyn API"]
+            summary: Reissues a COMM Token.
+            description: Reissues a COMM Token. COMM Tokens have a lifespan of 24 hours.
+            security:
+              - TomlynAccountJWT: []
+            responses:
+                "200":
+                    description: "`0` A COMM Token has been issued."
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    status:
+                                        type: integer
+                                        example: 0
+                                    message:
+                                        type: string
+                                        example: "ok"
+                                    data:
+                                        properties:
+                                            token:
+                                                $ref: "#/components/schemas/COMMToken"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+
+    /api/repo/clearCache:
+        delete:
+            tags: ["Tomlyn API"]
+            summary: Clear the cached information of a repository.
+            description: Clears the cached information of a repository. The Central Server will re-fetch the repository information the next time it is requested. Repository caches are automatically cleared every 30 minutes, so there should be no need to call this method unless you have made changes to your repository that you want to be reflected immediately.
+            parameters:
+              - in: query
+                name: address
+                description: The URL of the repository to clear the cache of.
+                required: true
+                schema:
+                    type: string
+                    example: "http://repo.tomlyn.protasis.moe/"
+            responses:
+                "200":
+                    description: "`0` Operation was successful. The cache of the specified repository has been cleared if the repository was cached. If not, the operation had no effect."
+
     /api/publish/create:
         post:
             tags:
@@ -88,12 +137,6 @@ paths:
                                         example: "ok"
                                     data:
                                         properties:
-                                            repoToken:
-                                                type: string
-                                                description: |
-                                                    The **Repository Token** associated with this account and this package. 
-
-                                                    Repository tokens are JWT tokens that proofs the current account's ownership of this package. This token is not to be confused with your accoun't API authentication token. **This token represent credentials - do not share this token with anyone.** This token can be acquired again at any time by calling an API.
                                             manifest:
                                                 $ref: "#/components/schemas/PackageManifest"
                 "401":
@@ -108,6 +151,80 @@ paths:
                                 status: 17
                                 message: "duplicate package uuid"
                                 data: {}
+
+    /api/publish/{package_id}/amend:
+        patch:
+            tags: ["Tomlyn API"]
+            summary: Modifies the status, as well as the manifest of a package.
+            description: |
+                The **amend** operation modifies the status of a Package. The new status of the package must be either the same as the current status or an allowed status transition. For example, a Package ID under the status `STANDBY` may only be advanced to either `STANDBY` (modify package manifest only), or `REVIEW_STAGING`. Attempting to advance a package to an invalid status will result in an error.
+
+                Package manifest modifications may be made by providing an `amendments` object in the request body. This object will be merged with the existing manifest. If a field in the `amendments` object conflicts with an existing field in the manifest, the field in the `amendments` object will take precedence. Fields that are invalid or not allowed to be modified (under the current package status) will be ignored and returned in the response.
+
+                A new version (and a new version ID) will be created every time this operation is performed. The version ID will be returned in the response. The old version with the content of the manifest prior to modification will be stored.
+
+                You must be the owner of the package to modify the package.
+
+                **Requests to this endpoint is limited to 1 per 2 hours, per account. In urgent cases where immediate modification is required, contact the Tomlyn team.**
+            security:
+              - TomlynAccountJWT: []
+            parameters:
+              - $ref: "#/components/parameters/PackageIdParam"
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            properties:
+                                status:
+                                    $ref: "#/components/schemas/PackageStatus"
+                                amendments:
+                                    type: object
+                                    description: |
+                                        A partial Package Manifest object that will be merged with the existing manifest. See the Schemas section for more information on the Package Manifest object.
+                                    example:
+                                        id: someNewPackageIdThatIsObviouslyNotGoingToWork
+                                        name: "神聖かまってちゃん"
+                                        romanizedName: "shinsei kamatte chan"
+                                        someUselessField: 123
+            responses:
+                "200":
+                    description: "`0` The package was modified successfully."
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    status:
+                                        type: integer
+                                        example: 0
+                                    message:
+                                        type: string
+                                        example: "ok"
+                                    data:
+                                        properties:
+                                            manifest:
+                                                allOf:
+                                                  - $ref: "#/components/schemas/PackageManifest"
+                                                  - description: The modified package manifest.
+                                            fieldsIgnored:
+                                                type: object
+                                                description: A list of field names that were included in the `amendments` object but were ignored during the operation, along with the reason why they were ignored.
+                                                example:
+                                                    id: modification not permitted
+                                                    someUselessField: invalid field
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+                "403":
+                    description: |
+                        `16` You are currently not permitted to set the status of this package to the specified status, or not permitted to modify this package in general.
+                        
+                        `33` The request to modify the package was rejected due to reason other than an invalid package status. The reason will be provided in the response message.
+                "404":
+                    description: "`15` The package specified does not exist."
+                "429":
+                    $ref: "#/components/responses/RateLimitedError"
+            
 
     /api/package/{package_id}:
         get:
@@ -143,63 +260,33 @@ paths:
                 "404":
                     description: "`15` The package specified does not exist."
 
-    /api/package/{package_id}/repoToken:
+    /api/package/{package_id}/verifyToken:
         get:
             tags:
                 - Tomlyn API
-            summary: Reacquire repository token.
-            description: Get the Repository Token associated to this package and account. You must be the owner of this package to acquire its repository token.
-            security:
-                - TomlynAccountJWT: []
+            summary: Verify a COMM Token for a package.
+            description: Called by repositories to verify that a COMM Token is **both* valid and represents ownership of a package.
             parameters:
                 - $ref: "#/components/parameters/PackageIdParam"
-            responses:
-                "200":
-                    description: "`0` The repository token was successfully retrieved."
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    status:
-                                        type: integer
-                                        example: 0
-                                    message:
-                                        type: string
-                                        example: "ok"
-                                    data:
-                                        type: object
-                                        properties:
-                                            repoToken:
-                                                type: string
-                                                description: |
-                                                    The **Repository Token** associated with this account and this package. 
-
-                                                    Repository tokens are JWT tokens that proofs the current account's ownership of this package. This token is not to be confused with your accoun't API authentication token. **This token represent credentials - do not share this token with anyone.** This token can be acquired again at any time by calling an API.
-                "401":
-                    $ref: "#/components/responses/UnauthorizedError"
-                "404":
-                    description: "`15` The request was authenticated successfully, but the package specified does not exist."
-
-    /api/auth/verifyRepoToken:
-        post:
-            tags:
-                - Tomlyn API
-            summary: Verify a repository token.
-            description: Called by repositories to verify a repository token. This token is used to prove the ownership of a package.
+                -   in: header
+                    name: token
+                    description: The COMM Token to verify.
+                    required: true
+                    schema:
+                        type: string
             requestBody:
                 content:
                     application/json:
                         schema:
                             type: object
                             properties:
-                                repoToken:
+                                token:
                                     type: string
-                                    description: The repository token to verify.
+                                    description: The COMM Token to verify.
                                     example: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0IiwiaWF0IjoxNzI2ODg4OTQyLCJpc3MiOiJ0b21seW5kIiwianRpIjoiaEdUUnVYdklYUVdIWno2MjVDd2M4UjBZZllTaTZrRldlUVRJVzY4OWltWWRRR0k0VVNXZUIyOTRMMElnMnJzSCIsInR5cGUiOiJBUEkifQ.qDxEAeQj6YqE5PlCsoGEJczfVN6xIXgnt4Rkwj50Tag"
             responses:
                 "200":
-                    description: "`0` The repository token is valid."
+                    description: "`0` The COMM Token is valid and represents ownership of this package."
                     content:
                         application/json:
                             schema:
@@ -214,11 +301,52 @@ paths:
                                     data:
                                         type: object
                                         properties:
+                                            accountId:
+                                                type: string
+                                                description: The Account ID that this token is associated with.
+                                                example: "SL1KH5FWGiTp5OYJwDKH4T6c4xNyo2ffeRTOL286syhDY9GBgIBok369AFZkwNVr"
                                             packageId:
                                                 type: string
-                                                description: The Package ID that this token is associated with.
+                                                description: The Package ID of the specified package, the same as the one in the URL.
                                                 example: "VEOD7z10sP1usvUZrfAG4s1PDL3dzY3jEnwAX577j5yjwJF3ISNAT782LP0DhkFR"
-                "404":
+                "401":
+                    description: "`16` The token provided is invalid. The repository should not trust the request that provided this token."
+
+    /api/auth/verifyToken:
+        get:
+            tags:
+                - Tomlyn API
+            summary: Verify a COMM Token.
+            description: Called by repositories to verify a COMM Token. This token is used to prove the ownership of a package.
+            parameters:
+            -   in: header
+                name: token
+                description: The COMM Token to verify.
+                required: true
+                schema:
+                    type: string
+            responses:
+                "200":
+                    description: "`0` The COMM Token is valid."
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    status:
+                                        type: integer
+                                        example: 0
+                                    message:
+                                        type: string
+                                        example: "ok"
+                                    data:
+                                        type: object
+                                        properties:
+                                            accountId:
+                                                type: string
+                                                description: The Account ID that this token is associated with.
+                                                example: "SL1KH5FWGiTp5OYJwDKH4T6c4xNyo2ffeRTOL286syhDY9GBgIBok369AFZkwNVr"
+                "401":
                     description: "`16` The token provided is invalid. The repository should not trust the request that provided this token."
 
     /repo/info:
@@ -232,7 +360,15 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: "#/components/schemas/RepositoryInfo"
+                                properties:
+                                    status:
+                                        type: integer
+                                        example: 0
+                                    message:
+                                        type: string
+                                        example: "ok"
+                                    data:
+                                        $ref: "#/components/schemas/RepositoryInfo"
 
     /repo/package/{package_id}/status:
         get:
@@ -243,7 +379,7 @@ paths:
             parameters:
                 - $ref: "#/components/parameters/PackageIdParam"
             security:
-                - PackageRepoTokenJWT: []
+                - COMM Token: []
             responses:
                 "200":
                     description: This package is stored or will be stored in your repository.
@@ -278,7 +414,7 @@ paths:
             parameters:
                 - $ref: "#/components/parameters/PackageIdParam"
             security:
-                - PackageRepoTokenJWT: []
+                - PackageCOMMTokenJWT: []
             requestBody:
                 required: true
                 content:
@@ -299,6 +435,58 @@ paths:
                     description: "*Implemented by Your Repository* The user does not have permission to upload this package to your repository."
                 "404":
                     description: "The package specified does not exist."
+
+    /repo/user/{account_id}/grants:
+        get:
+            tags: [Repository Protocol]
+            summary: Gets permissions for an account.
+            description: |
+                    Gets a list of grants (permissions within a repository) for an account. Grants represents the permission of an account in your repository, for example, if a user has the `WRITE` grant, they can upload packages to your repository.
+
+                    You may return custom grant strings apart from the standard ones specified in the repository protocol; however, standard clients will not recognize these custom grants. Remember, standard grants are in all caps.
+
+                    Note: Generally, there are no need for repository to authenticate this endpoint. However, if you wish to restrict access to this endpoint, you can require the COMM Token to be passed in the `X-Comm-Token` header.
+            parameters:
+                -   in: path
+                    name: account_id
+                    description: The Account ID of the account to get grants for.
+                    required: true
+                    schema:
+                        type: string
+                -   in: query
+                    name: packageId
+                    description: If provided, return the package-specific grants for this package and this account. If not provided, return the general repository grants for this account. If the specified package does not exist, treat this paramter as if it was not provided.
+                    schema:
+                        type: string
+            responses:
+                "200":
+                    description: "`0` The account or package has a specific list of grants."
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    status:
+                                        type: integer
+                                        example: 0
+                                    message:
+                                        type: string
+                                        example: "ok"
+                                    data:
+                                        type: object
+                                        properties:
+                                            grants:
+                                                type: array
+                                                items:
+                                                    type: string
+                                                example:
+                                                - std:read
+                                                - std:write
+                                                - std:unlink
+                "204":
+                    description: "`0` This account or package has **ALL** possible grants that can be given. If you repository is a public one, you may return this response."
+                "403":
+                    description: "`16` This account or package has **NO** grants. If an account was queried, this means that the account may not access your repository. If a package was queried, this means that the specified account may not access that package."
 
 components:
     schemas:
@@ -438,22 +626,25 @@ components:
                       - owner
                       - status
                 - properties:
-                      id:
-                          $ref: "#/components/schemas/TomlynSnowflakeID"
-                      owner:
-                          $ref: "#/components/schemas/TomlynSnowflakeID"
-                          description: The ID of the account who owns this package.
-
-                      status:
-                          type: string
-                          enum:
-                              - STANDBY
-                              - UPLOADED
-                              - UNDER_REVIEW
-                              - PUBLISHED
-                              - PARKED
-                          description: The current status of this package.
-                          example: STANDBY
+                        id:
+                            $ref: "#/components/schemas/TomlynSnowflakeID"
+                        versionId:
+                            allOf:
+                              - $ref: "#/components/schemas/TomlynSnowflakeID"
+                              - description: The ID of the version of this package. Version IDs are used to track changes to a package; a new version is created every time an **amend** operation is performed.
+                        totalVersions:
+                            type: integer
+                            description: The total number of versions of this package. This number does not include the current version.
+                            example: 3
+                        expire:
+                            type: integer
+                            description: A UNIX timestamp (in milliseconds) indicating when this Package ID will expire and be released. When set to `null` or `-1`, the Package ID will never expire. Package IDs that are released will be deleted along with its package manifest and all versions.
+                            example: 1630000000
+                        owner:
+                            $ref: "#/components/schemas/TomlynSnowflakeID"
+                            description: The ID of the account who owns this package.
+                        status:
+                            $ref: "#/components/schemas/PackageStatus"
 
                 - $ref: "#/components/schemas/PackageManifestHeader"
                 - $ref: "#/components/schemas/PackageManifestMetadata"
@@ -493,7 +684,7 @@ components:
                 address:
                     type: string
                     description: The official URL of the repository.
-                    example: "http://repo.tomlyn.protasis.moe/"
+                    example: "https://repo.tomlyn.protasis.moe/"
                 description:
                     type: string
                     description: A description of the repository. Rich text is supported.
@@ -520,10 +711,10 @@ components:
 
                         See "Squawk Codes" in the docs site for more information.
                     example: 7500
-                private:
+                fullyPublic:
                     type: boolean
-                    description: Whether this repository is private. Defaults to `false`.
-                    default: false
+                    description: Whether this repository is fully public. Defaults to `true`.
+                    default: true
                 version:
                     type: string
                     description: An repository-defined version number for the repository. This could be a semantic version number or any other versioning scheme.
@@ -535,6 +726,33 @@ components:
 
                         Protocol version changes whenever there is a major change in repository protocol. The latest protocol version will be posted on the Tomlyn docs site as well as the developer portal. Make sure that you update your repository settings in time.
                     example: MATCHA BUFFET
+                motd:
+                    type: string
+                    description: A message of the day for the repository. Feel free to use this field as a "notice board" for your repository. This message is displayed to users when they access the repository.
+                    example: We will be performing maintenance on the repository on 2022-01-01. The repository will be down for 24 hours.
+        
+        COMMToken:
+            type: string
+            description: |
+                The **COMM Token** associated with this account. 
+
+                COMM Tokens are JWT tokens that proofs ownership of an account. COMM Tokens are valid for 24 hours.This token is not to be confused with your accoun't API authentication token. **This token represent credentials - do not share this token with anyone.** This token can be acquired again at any time by calling an API.
+            example: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0IiwiaWF0IjoxNzI2ODg4OTQyLCJpc3MiOiJ0b21seW5kIiwianRpIjoiaEdUUnVYdklYUVdIWno2MjVDd2M4UjBZZllTaTZrRldlUVRJVzY4OWltWWRRR0k0VVNXZUIyOTRMMElnMnJzSCIsInR5cGUiOiJBUEkifQ.qDxEAeQj6YqE5PlCsoGEJczfVN6xIXgnt4Rkwj50Tag
+
+        PackageStatus:
+            type: string
+            description: The status of a package. Read the API documentation for more information on package statuses.
+            enum:
+                - STANDBY
+                - REVIEW_STAGING
+                - UNDER_REVIEW
+                - STAGING
+                - PUBLISHED
+                - PARKED
+                - PARKED_LOCKED
+                - REJECTED_LOCKED
+                - ABNORMAL
+            example: STAGING
 
     parameters:
         PackageIdParam:
@@ -581,6 +799,34 @@ components:
                                   status: 16
                                   message: "permission denied"
                                   data: {}
+        
+        ForbiddenError:
+            description: "`16` You are not permitted to access this resource or perform this action."
+            content:
+                application/json:
+                    schema:
+                        allOf:
+                            - $ref: "#/components/schemas/StandardResponse"
+                            - example:
+                                  status: 16
+                                  message: "operation not permitted"
+                                  data: {}
+        
+        RateLimitedError:
+            description: "`56` You have been rate limited. Please wait a while before trying again. Most rate limits are imposed on access to a specific endpoint as opposed to the entire API; however API-wide rate limits will be imposed when we detect abuse or excessive use."
+            content:
+                application/json:
+                    schema:
+                        allOf:
+                            - $ref: "#/components/schemas/StandardResponse"
+                            - properties:
+                                data:
+                                    type: object
+                                    properties:
+                                        retryAfter:
+                                            type: integer
+                                            description: A UNIX timestamp (in milliseconds) indicating when you can try again. On some endpoints, this field may not be present.
+                                            example: 1630000000
 
     securitySchemes:
         TomlynAccountJWT:
@@ -589,14 +835,14 @@ components:
             in: header
             description: JWT Token acquired via the login method.
 
-        PackageRepoTokenJWT:
+        COMM Token:
             type: apiKey
-            name: X-Repo-Token
+            name: X-Comm-Token
             in: header
             description: |
                 *FOR REQUESTS TO REPOSITORIES ONLY*
 
-                The **Repository Token** associated with this account and this package. A repository may choose to use this token to verify the identity of the requestor and the ownership of the package.
+                The **COMM Token** associated with this account. A repository may choose to use this token to verify the identity of the requestor. COMM Tokens are valid for 24 hours.
 
                 This authentication method is optional - the repository can choose whether to honor this token or not. It is up to the repository to decide when this token is required as well as what resources this token can authorize access to.
 
